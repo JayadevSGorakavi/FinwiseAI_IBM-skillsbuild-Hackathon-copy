@@ -90,12 +90,14 @@ export default function Sidebar({ user, profile }) {
         {!collapsed && user && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl mb-2">
             <img
-              src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || "U")}&background=6C63FF&color=fff`}
+              src={user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || "U")}&background=6C63FF&color=fff`}
               alt="avatar"
               className="w-8 h-8 rounded-full object-cover"
             />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-textPrimary truncate">{user.displayName || "Student"}</p>
+              <p className="text-sm font-medium text-textPrimary truncate">
+                {user.displayName || user.email?.split("@")[0]}
+              </p>
               <p className="text-[11px] text-textSecondary truncate">{user.email || ""}</p>
             </div>
           </div>
