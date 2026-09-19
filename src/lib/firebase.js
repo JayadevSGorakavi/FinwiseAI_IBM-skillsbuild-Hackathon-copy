@@ -109,6 +109,11 @@ function removeLocalItem(key) {
 // ============================================================
 const googleProvider = new GoogleAuthProvider();
 
+// Force Google to show the account picker screen on every login attempt
+googleProvider.setCustomParameters({
+  prompt: "select_account"
+});
+
 function formatUserObject(user) {
   if (!user) return null;
   return {
