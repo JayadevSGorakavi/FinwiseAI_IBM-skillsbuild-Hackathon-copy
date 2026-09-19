@@ -109,7 +109,7 @@ function removeLocalItem(key) {
 // ============================================================
 const googleProvider = new GoogleAuthProvider();
 
-// Force Google to show the account picker screen on every login attempt
+// Force Google to display the account chooser on every login attempt
 googleProvider.setCustomParameters({
   prompt: "select_account"
 });
@@ -118,7 +118,7 @@ function formatUserObject(user) {
   if (!user) return null;
   return {
     uid: user.uid,
-    displayName: user.displayName || user.email?.split("@")[0] || "Student",
+    displayName: user.displayName || user.email?.split("@")[0] || "Jayadev S Gorakavi",
     email: user.email || "student@university.edu",
     photoURL: user.photoURL || null,
   };
