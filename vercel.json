@@ -5,7 +5,7 @@
       "destination": "/server/index.cjs"
     },
     {
-      "source": "/:(.*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]
