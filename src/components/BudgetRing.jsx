@@ -1,17 +1,19 @@
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { formatCurrency } from "../lib/countries";
 
-export default function BudgetRing({ spent = 0, total = 10000, countryCode = "IN" }) {
-  const remaining = Math.max(0, total - spent);
-  const isOver = spent > total;
-  const overAmount = spent - total;
+export default function BudgetRing({ spent = 0, saved = 0, total = 10000, countryCode = "IN" }) {
+  const totalAllocated = spent + saved;
+  const remaining = Math.max(0, total - totalAllocated);
+  const isOver = totalAllocated > total;
+  const overAmount = totalAllocated - total;
 
   const data = [
     { name: "Spent", value: spent, color: isOver ? "#C81E3A" : "#6C63FF" },
-    { name: "Remaining", value: isOver ? 0 : remaining, color: "#2A2A2E" },
+    ...(saved > 0 ? [{ name: "Saved", value: saved, color: "#10B981" }] : []),
+    { name: "Income Left", value: isOver ? 0 : remaining, color: "#2A2A2E" },
   ];
 
-  const pct = Math.min(100, Math.round((spent / (total || 1)) * 100));
+  const pct = Math.min(100, Math.round((totalAllocated / (total || 1)) * 100));
 
   return (
     <div className="flex flex-col items-center justify-center relative">
@@ -41,7 +43,7 @@ export default function BudgetRing({ spent = 0, total = 10000, countryCode = "IN
             {pct}%
           </span>
           <span className="text-[11px] text-textSecondary font-medium uppercase tracking-wider">
-            {isOver ? "Over Budget" : "Spent"}
+            {isOver ? "Over Budget" : "Allocated"}
           </span>
         </div>
       </div>
@@ -54,10 +56,19 @@ export default function BudgetRing({ spent = 0, total = 10000, countryCode = "IN
           </span>
           <span className="font-semibold text-textPrimary">{formatCurrency(spent, countryCode)}</span>
         </div>
+        {saved > 0 && (
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-textSecondary flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-accent"></span>
+              Actively Saved
+            </span>
+            <span className="font-semibold text-accent">{formatCurrency(saved, countryCode)}</span>
+          </div>
+        )}
         <div className="flex justify-between items-center text-xs">
           <span className="text-textSecondary flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-border"></span>
-            {isOver ? "Over Budget By" : "Remaining"}
+            {isOver ? "Over Budget By" : "Income Left"}
           </span>
           <span className={`font-semibold ${isOver ? "text-danger" : "text-accent"}`}>
             {formatCurrency(isOver ? overAmount : remaining, countryCode)}

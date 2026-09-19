@@ -270,35 +270,37 @@ export function exportMonthlyReviewPDF(
   const totalIncome  = budget?.total || profile?.income || 15000;
   const totalSpent   = monthlyTrans.filter((e) => e.type !== "saving").reduce((s, e) => s + Number(e.amount), 0);
   const totalSavedTx = monthlyTrans.filter((e) => e.type === "saving").reduce((s, e) => s + Number(e.amount), 0);
-  const netSavings   = totalIncome - totalSpent;
+  const incomeLeft   = totalIncome - totalSpent - totalSavedTx;
   const spentPct     = totalIncome > 0 ? Math.round((totalSpent / totalIncome) * 100) : 0;
-  const savingsPct   = totalIncome > 0 ? Math.round((netSavings / totalIncome) * 100) : 0;
+  const savingsPct   = totalIncome > 0 ? Math.round((totalSavedTx / totalIncome) * 100) : 0;
+  const incomeLeftPct = totalIncome > 0 ? Math.round((incomeLeft / totalIncome) * 100) : 0;
 
   // ── Section 1: Monthly Summary ───────────────────────────────
   sectionTitle("1. Monthly Summary");
 
-  const colW = (pdfW - margin * 2 - 8) / 3;
+  const colW = (pdfW - margin * 2 - 9) / 4;
   const summaryBoxes = [
     { label: "TOTAL INCOME",  val: fmt(totalIncome),  rgb: cCharcoal },
     { label: "TOTAL SPENT",   val: fmt(totalSpent),   rgb: cRed  },
-    { label: "NET SAVINGS",   val: fmt(netSavings),   rgb: netSavings >= 0 ? cGreen : cRed },
+    { label: "TOTAL SAVED",   val: fmt(totalSavedTx), rgb: cGreen },
+    { label: "INCOME LEFT",   val: fmt(incomeLeft),   rgb: incomeLeft >= 0 ? cIndigo : cRed },
   ];
 
   summaryBoxes.forEach((b, i) => {
-    const bx = margin + i * (colW + 4);
+    const bx = margin + i * (colW + 3);
     // Draw card box with a light background and light border
     pdf.setFillColor(...cLightBg);
     pdf.setDrawColor(...cBorder);
     pdf.roundedRect(bx, y, colW, 18, 1.5, 1.5, "FD");
 
-    pdf.setFontSize(6.5);
+    pdf.setFontSize(6);
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(...cGrayText);
-    pdf.text(b.label, bx + 4, y + 5.5);
+    pdf.text(b.label, bx + 3, y + 5.5);
 
-    pdf.setFontSize(10);
+    pdf.setFontSize(9);
     pdf.setTextColor(...b.rgb);
-    pdf.text(b.val, bx + 4, y + 14);
+    pdf.text(b.val, bx + 3, y + 14);
   });
   y += 24;
 
@@ -306,7 +308,7 @@ export function exportMonthlyReviewPDF(
   pdf.setFont("helvetica", "normal");
   pdf.setTextColor(...cGrayText);
   pdf.text(
-    `Spent ${spentPct}% of income  |  Savings rate: ${savingsPct}%  |  Recorded savings transfers: ${fmt(totalSavedTx)}`,
+    `Spent: ${spentPct}% of income  |  Actively saved: ${savingsPct}% (${fmt(totalSavedTx)})  |  Income left: ${incomeLeftPct}% (${fmt(incomeLeft)})`,
     margin, y
   );
   y += 9;
@@ -346,10 +348,10 @@ export function exportMonthlyReviewPDF(
       ok: aWantsPct <= targets.Wants,
     },
     {
-      label: "Savings (Income - Expenses)",
+      label: "Savings (Actively Saved)",
       target: targets.Savings,
       actual: savingsPct,
-      spent: netSavings,
+      spent: totalSavedTx,
       targetAmt: (targets.Savings / 100) * totalIncome,
       ok: savingsPct >= targets.Savings,
     },
@@ -567,7 +569,7 @@ export function exportMonthlyReviewPDF(
     pdf.setTextColor(...cRed);
     pdf.text(fmt(runningSpent), margin + 38, y + 5.5);
     pdf.setTextColor(...cGreen);
-    pdf.text(fmt(Math.max(0, netSavings)), margin + 78, y + 5.5);
+    pdf.text(fmt(totalSavedTx), margin + 78, y + 5.5);
     y += 13;
   } else {
     checkPageBreak(10);

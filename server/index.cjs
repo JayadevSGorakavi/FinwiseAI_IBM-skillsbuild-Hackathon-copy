@@ -259,8 +259,10 @@ app.post("/api/health-score", async (req, res) => {
   const country     = profile?.country  || "India";
   const currency    = profile?.currency || "INR";
   const income      = profile?.income   || 0;
-  const totalSpent  = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  const totalSpent  = (expenses || []).filter(e => e.type !== "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSaved  = (expenses || []).filter(e => e.type === "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const monthlyBudget = budget?.total || income;
+  const incomeLeft  = monthlyBudget - totalSpent - totalSaved;
 
   const systemPrompt = `You are a financial health analyst for students. 
 Calculate the financial health score based ONLY on two components: Budget Adherence (50 points) and Goal Alignment (50 points).
@@ -297,6 +299,8 @@ Country: ${country}
 Currency: ${currency}
 Monthly Income: ${income} ${currency}
 Total Spent This Month: ${totalSpent} ${currency}
+Actively Saved This Month: ${totalSaved} ${currency}
+Income Left: ${incomeLeft} ${currency}
 Monthly Budget: ${monthlyBudget} ${currency}
 Goals: ${(profile?.goals || []).join(", ") || "Not set"}
 
@@ -318,11 +322,12 @@ Calculate financial health score, subScores (budget & goals out of 50 each), and
 
     // Computed fallback score when JSON parse failed
     let budgetSub = 50;
-    if (totalSpent > monthlyBudget) {
-      const overPct = (totalSpent - monthlyBudget) / (monthlyBudget || 1);
+    const totalAllocated = totalSpent + totalSaved;
+    if (totalAllocated > monthlyBudget) {
+      const overPct = (totalAllocated - monthlyBudget) / (monthlyBudget || 1);
       budgetSub = Math.max(0, Math.round(50 - (overPct * 50)));
     } else {
-      const remainingPct = monthlyBudget > 0 ? (monthlyBudget - totalSpent) / monthlyBudget : 0;
+      const remainingPct = monthlyBudget > 0 ? (monthlyBudget - totalAllocated) / monthlyBudget : 0;
       budgetSub = Math.max(20, Math.min(50, Math.round(20 + (remainingPct * 30))));
     }
 
@@ -417,8 +422,10 @@ app.post("/api/monthly-review", async (req, res) => {
   const country     = profile?.country  || "India";
   const currency    = profile?.currency || "INR";
   const income      = profile?.income   || 0;
-  const totalSpent  = (expenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  const totalSpent  = (expenses || []).filter(e => e.type !== "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSaved  = (expenses || []).filter(e => e.type === "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
   const monthlyBudget = budget?.total || income;
+  const incomeLeft  = monthlyBudget - totalSpent - totalSaved;
   const goals       = profile?.goals || [];
 
   const categoryTotals = {};
@@ -442,6 +449,8 @@ Currency: ${currency}
 Monthly Income: ${income} ${currency}
 Monthly Budget Limit: ${monthlyBudget} ${currency}
 Total Spent: ${totalSpent} ${currency}
+Actively Saved: ${totalSaved} ${currency}
+Income Left: ${incomeLeft} ${currency}
 Category Breakdown: ${JSON.stringify(categoryTotals)}
 Goals to track: ${JSON.stringify(goals)}
 
@@ -461,18 +470,19 @@ Provide goal alignment feedback based on this data.`;
     // Fallback comparison
     const goalAlignments = goals.map(g => {
       const isSavingGoal = g.toLowerCase().includes("save") || g.toLowerCase().includes("fund");
-      const savings = income - totalSpent;
-      const status = isSavingGoal ? (savings > 0 ? "on-track" : "needs-focus") : "on-track";
+      const status = isSavingGoal ? (totalSaved > 0 ? "on-track" : "needs-focus") : "on-track";
       const message = isSavingGoal
-        ? `You saved ${savings} ${currency} this month. Keep it up to build your savings habit.`
+        ? (totalSaved > 0
+            ? `You actively saved ${totalSaved} ${currency} this month. Keep it up to build your savings habit.`
+            : `No savings were recorded this month. Transfer a portion of your income to hit your savings goal.`)
         : `Track your day-to-day spending on wants to stay aligned with your goal: "${g}".`;
       return { goal: g, status, message };
     });
 
     res.json({
       goalAlignments,
-      overallVerdict: `You spent ${totalSpent} ${currency} out of your ${income} ${currency} income. You managed to save ${income - totalSpent} ${currency} this month.`,
-      nextMonthFocus: "Try to keep your non-essential categories below 30% of total spending.",
+      overallVerdict: `You spent ${totalSpent} ${currency} and actively saved ${totalSaved} ${currency} out of your ${income} ${currency} income, leaving ${incomeLeft} ${currency} as unspent income.`,
+      nextMonthFocus: "Try to keep your non-essential categories below 30% of total spending and log your savings transfers early.",
       _stub: true
     });
   } catch {

@@ -42,8 +42,9 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
     .filter((e) => e.type === "saving")
     .reduce((sum, e) => sum + Number(e.amount), 0);
 
-  const netSavings = totalIncome - totalSpent;
-  const savingsPct = totalIncome > 0 ? Math.round((netSavings / totalIncome) * 100) : 0;
+  // Income Left = income minus expenses minus savings
+  const incomeLeft = totalIncome - totalSpent - totalSavedTrans;
+  const incomeLeftPct = totalIncome > 0 ? Math.round((incomeLeft / totalIncome) * 100) : 0;
   const spentPct = totalIncome > 0 ? Math.round((totalSpent / totalIncome) * 100) : 0;
 
   // Actual vs Target Budget Allocations calculation
@@ -58,7 +59,8 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
   const targetAllocations = budget?.allocations || { Needs: 50, Wants: 30, Savings: 20 };
   const actualNeedsPct = totalIncome > 0 ? Math.round((needsSpent / totalIncome) * 100) : 0;
   const actualWantsPct = totalIncome > 0 ? Math.round((wantsSpent / totalIncome) * 100) : 0;
-  const actualSavingsPct = savingsPct;
+  // Savings % = only explicitly recorded savings entries, not leftover income
+  const actualSavingsPct = totalIncome > 0 ? Math.round((totalSavedTrans / totalIncome) * 100) : 0;
 
   // Group by category
   const categories = ["Food", "Transport", "Rent", "Entertainment", "Education", "Healthcare", "Other"];
@@ -89,16 +91,18 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
       const goals = profile?.goals || [];
       const goalAlignments = goals.map((g) => {
         const isSavingGoal = g.toLowerCase().includes("save") || g.toLowerCase().includes("fund");
-        const status = isSavingGoal ? (netSavings > 0 ? "on-track" : "needs-focus") : "on-track";
+        const status = isSavingGoal ? (totalSavedTrans > 0 ? "on-track" : "needs-focus") : "on-track";
         const message = isSavingGoal
-          ? `You saved ${formatCurrency(netSavings, countryCode)} in ${selectedMonth}. Keep building this savings habit to hit your goal.`
+          ? totalSavedTrans > 0
+            ? `You actively saved ${formatCurrency(totalSavedTrans, countryCode)} in ${selectedMonth}. Keep building this habit to hit your goal.`
+            : `No savings were recorded in ${selectedMonth}. Try transferring even a small amount to your savings to stay on track.`
           : `Make sure to review your wants categories weekly to ensure they align with "${g}".`;
         return { goal: g, status, message };
       });
       setAiReport({
         goalAlignments,
-        overallVerdict: `In ${selectedMonth}, you spent ${formatCurrency(totalSpent, countryCode)} out of your ${formatCurrency(totalIncome, countryCode)} income, leaving ${formatCurrency(netSavings, countryCode)} in savings (${savingsPct}%).`,
-        nextMonthFocus: "Plan your Wants spending in advance to lock in savings first next month.",
+        overallVerdict: `In ${selectedMonth}, you spent ${formatCurrency(totalSpent, countryCode)} out of your ${formatCurrency(totalIncome, countryCode)} income. You actively saved ${formatCurrency(totalSavedTrans, countryCode)}, leaving ${formatCurrency(incomeLeft, countryCode)} as unspent income.`,
+        nextMonthFocus: "Plan your Wants spending in advance and log savings transfers on payday next month.",
       });
     } finally {
       setLoadingAi(false);
@@ -169,11 +173,16 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
               <div className="text-[10px] text-textSecondary mt-1">{spentPct}% of income</div>
             </div>
             <div className="glass p-4 rounded-2xl border border-border">
-              <p className="text-[10px] text-textSecondary uppercase tracking-wider">Calculated Savings</p>
-              <p className={`text-xl font-bold ${netSavings >= 0 ? "text-accent" : "text-danger"}`}>
-                {formatCurrency(netSavings, countryCode)}
+              <p className="text-[10px] text-textSecondary uppercase tracking-wider">Income Left</p>
+              <p className={`text-xl font-bold ${incomeLeft >= 0 ? "text-accent" : "text-danger"}`}>
+                {formatCurrency(incomeLeft, countryCode)}
               </p>
-              <div className="text-[10px] text-textSecondary mt-1">{savingsPct}% savings rate</div>
+              <div className="text-[10px] text-textSecondary mt-1">
+                {incomeLeftPct}% of income unspent
+                {totalSavedTrans > 0 && (
+                  <span className="ml-1 text-accent">· {formatCurrency(totalSavedTrans, countryCode)} actively saved</span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -188,7 +197,7 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
               {/* Needs */}
-              <div className="p-3.5 rounded-xl bg-surface/50 border border-border space-y-2">
+              <div className="card-inner p-3.5 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-textPrimary">Needs</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${actualNeedsPct <= targetAllocations.Needs ? "text-accent bg-accent/10" : "text-danger bg-danger/10"}`}>
@@ -205,7 +214,7 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
               </div>
 
               {/* Wants */}
-              <div className="p-3.5 rounded-xl bg-surface/50 border border-border space-y-2">
+              <div className="card-inner p-3.5 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-textPrimary">Wants</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${actualWantsPct <= targetAllocations.Wants ? "text-accent bg-accent/10" : "text-danger bg-danger/10"}`}>
@@ -222,7 +231,7 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
               </div>
 
               {/* Savings */}
-              <div className="p-3.5 rounded-xl bg-surface/50 border border-border space-y-2">
+              <div className="card-inner p-3.5 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-textPrimary">Savings</span>
                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${actualSavingsPct >= targetAllocations.Savings ? "text-accent bg-accent/10" : "text-warning bg-warning/10"}`}>
@@ -231,11 +240,14 @@ export default function MonthlyReportPage({ profile, expenses = [], budget }) {
                 </div>
                 <div className="flex justify-between text-[11px] text-textSecondary">
                   <span>Target: {targetAllocations.Savings}%</span>
-                  <span>Actual: {actualSavingsPct}%</span>
+                  <span>Recorded: {actualSavingsPct}% ({formatCurrency(totalSavedTrans, countryCode)})</span>
                 </div>
                 <div className="w-full h-1.5 bg-surface rounded-full overflow-hidden">
                   <div className="h-full bg-accent" style={{ width: `${Math.min(100, Math.max(0, actualSavingsPct))}%` }} />
                 </div>
+                {totalSavedTrans === 0 && (
+                  <p className="text-[10px] text-warning">No savings logged yet — add savings entries in the Expenses tab.</p>
+                )}
               </div>
             </div>
           </div>

@@ -44,33 +44,34 @@ const DEFAULT_PROFILE = {
   onboarded: true,
 };
 
+const currentMonthIso = new Date().toISOString().substring(0, 7);
 const INITIAL_EXPENSES = [
   {
     id: "1",
     category: "Food",
     amount: 3200,
-    date: "2026-08-20",
+    date: `${currentMonthIso}-02`,
     note: "Weekly groceries & dining out",
   },
   {
     id: "2",
     category: "Transport",
     amount: 800,
-    date: "2026-08-21",
+    date: `${currentMonthIso}-05`,
     note: "Metro pass",
   },
   {
     id: "3",
     category: "Education",
     amount: 1500,
-    date: "2026-08-22",
+    date: `${currentMonthIso}-08`,
     note: "Textbooks & reference code",
   },
   {
     id: "4",
     category: "Entertainment",
     amount: 650,
-    date: "2026-08-23",
+    date: `${currentMonthIso}-12`,
     note: "Movie & snacks",
   },
 ];
@@ -138,7 +139,20 @@ export default function App() {
         // 2. Expenses
         const storedExpenses = await getExpenses(activeUid);
         if (storedExpenses && storedExpenses.length > 0) {
-          setExpenses(storedExpenses);
+          const currentMonthIso = new Date().toISOString().substring(0, 7);
+          const isOldAugustDemo = storedExpenses.every(e => (e.date || "").startsWith("2026-08"));
+          if (isOldAugustDemo) {
+            const updated = storedExpenses.map(e => ({
+              ...e,
+              date: (e.date || "").replace("2026-08", currentMonthIso),
+            }));
+            for (const exp of updated) {
+              await addExpense(activeUid, exp);
+            }
+            setExpenses(updated);
+          } else {
+            setExpenses(storedExpenses);
+          }
         } else {
           // Seed with initial expenses so user sees example data
           for (const exp of INITIAL_EXPENSES) {

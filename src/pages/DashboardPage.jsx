@@ -22,9 +22,22 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
   const [improvements, setImprovements] = useState([]);
   const [showBreakdown, setShowBreakdown] = useState(false);
 
-  const totalIncome = profile?.income || 15000;
-  const totalSpent = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const currentMonthStr = new Date().toISOString().substring(0, 7);
+  const currentMonthExpenses = expenses.filter((e) => (e.date || "").startsWith(currentMonthStr));
+
+  const isSavingEntry = (e) =>
+    e.type === "saving" ||
+    ["Emergency Fund", "Savings Account", "Investments", "Goal Saving"].includes(e.category);
+
+  const totalIncome = profile?.income || budget?.total || 15000;
+  const totalSpent = currentMonthExpenses
+    .filter((e) => !isSavingEntry(e))
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  const totalSaved = currentMonthExpenses
+    .filter((e) => isSavingEntry(e))
+    .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
   const totalBudget = budget?.total || totalIncome;
+  const incomeLeft = totalBudget - totalSpent - totalSaved;
 
   const scholarships = getScholarshipsForCountry(countryCode).slice(0, 2);
   const loans = getLoansForCountry(countryCode).slice(0, 2);
@@ -35,7 +48,7 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
       const res = await fetch("/api/health-score", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ profile, expenses, budget }),
+        body: JSON.stringify({ profile, expenses: currentMonthExpenses, budget }),
       });
       if (!res.ok) throw new Error("Health score API unavailable");
       const data = await res.json();
@@ -45,17 +58,18 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
       setSubScores(data.subScores || { savings: 25, budget: 25, goals: 15 });
       setImprovements(data.improvements || []);
     } catch {
-      const savingsRate = totalIncome > 0 ? Math.max(0, (totalIncome - totalSpent) / totalIncome) : 0;
-      const score = Math.round(Math.min(100, Math.max(35, (savingsRate * 50) + (totalSpent <= totalBudget ? 30 : 10) + 20)));
+      const savingsRate = totalIncome > 0 ? totalSaved / totalIncome : 0;
+      const budgetAdherence = (totalSpent + totalSaved) <= totalBudget ? 30 : 10;
+      const score = Math.round(Math.min(100, Math.max(35, (savingsRate * 50) + budgetAdherence + 20)));
       const grade = score >= 80 ? "A" : score >= 60 ? "B" : score >= 40 ? "C" : "D";
       setHealthScore(score);
       setHealthGrade(grade);
-      setAiTip(savingsRate > 0.15
-        ? "Excellent job! You are maintaining a healthy savings buffer this month."
-        : "Keep your non-essential expenses under 30% of total income to stay on track.");
+      setAiTip(totalSaved > 0
+        ? `Great job! You've actively saved ${formatCurrency(totalSaved, countryCode)} this month.`
+        : "Keep your non-essential expenses under 30% of total income and log your savings transfers early.");
 
       const savingsSub = Math.round(Math.min(40, savingsRate * 40));
-      const budgetSub = totalSpent <= totalBudget ? 30 : 10;
+      const budgetSub = (totalSpent + totalSaved) <= totalBudget ? 30 : 10;
       const goalsSub = 15;
       setSubScores({ savings: savingsSub, budget: budgetSub, goals: goalsSub });
       setImprovements([
@@ -122,7 +136,7 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
               Details <ArrowUpRight size={12} />
             </Link>
           </div>
-          <BudgetRing spent={totalSpent} total={totalBudget} countryCode={countryCode} />
+          <BudgetRing spent={totalSpent} saved={totalSaved} total={totalBudget} countryCode={countryCode} />
         </div>
 
         {/* Widget 3: Daily AI Insight */}
@@ -154,41 +168,71 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
         <div className="glass p-6 rounded-2xl border border-border flex flex-col justify-between">
           <div className="flex justify-between items-center mb-2">
             <span className="text-xs font-semibold text-textSecondary uppercase tracking-wider">Burn Rate & Forecast</span>
-            <span className="badge badge-accent">Live Forecast</span>
+            <span className="badge badge-accent">Needs & Wants Only</span>
           </div>
           {(() => {
             const today = new Date();
             const currentDay = today.getDate();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             const percentElapsed = Math.round((currentDay / daysInMonth) * 100);
-            
-            const dailyBurn = currentDay > 0 ? totalSpent / currentDay : 0;
+
+            // Strictly filter to Needs and Wants categories (all savings excluded)
+            const isSaving = (e) =>
+              e.type === "saving" ||
+              ["Emergency Fund", "Savings Account", "Investments", "Goal Saving"].includes(e.category);
+
+            const needsCats = ["Food", "Transport", "Rent", "Education", "Healthcare"];
+            const needsSpent = currentMonthExpenses
+              .filter((e) => !isSaving(e) && needsCats.includes(e.category))
+              .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+            const wantsSpent = currentMonthExpenses
+              .filter((e) => !isSaving(e) && !needsCats.includes(e.category))
+              .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+            const totalNeedsAndWants = needsSpent + wantsSpent;
+            const dailyBurn = currentDay > 0 ? Math.round(totalNeedsAndWants / currentDay) : 0;
             const projectedSpend = Math.round(dailyBurn * daysInMonth);
-            const isOver = projectedSpend > totalBudget;
-            const overAmt = projectedSpend - totalBudget;
-            const spendPercent = totalBudget > 0 ? Math.round((projectedSpend / totalBudget) * 100) : 0;
+
+            // Target budget for Needs + Wants (excluding savings allocation)
+            const allocations = budget?.allocations || { Needs: 50, Wants: 30, Savings: 20 };
+            const spendBudgetPct = ((Number(allocations.Needs) || 50) + (Number(allocations.Wants) || 30)) / 100;
+            const spendBudget = Math.round(totalBudget * spendBudgetPct);
+
+            const isOver = projectedSpend > spendBudget;
+            const overAmt = projectedSpend - spendBudget;
+            const spendPercent = spendBudget > 0 ? Math.round((projectedSpend / spendBudget) * 100) : 0;
             
             return (
-              <div className="space-y-4 my-auto">
+              <div className="space-y-3.5 my-auto">
                 <div className="flex justify-between items-end">
                   <div>
-                    <p className="text-[10px] text-textSecondary uppercase">Projected Spend</p>
+                    <p className="text-[10px] text-textSecondary uppercase tracking-wider">Daily Burn Rate</p>
+                    <p className="text-xl font-bold text-textPrimary">
+                      {formatCurrency(dailyBurn, countryCode)}
+                      <span className="text-xs font-normal text-textSecondary">/day</span>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] text-textSecondary uppercase tracking-wider">Projected Spend</p>
                     <p className={`text-xl font-bold ${isOver ? 'text-danger' : 'text-accent'}`}>
                       {formatCurrency(projectedSpend, countryCode)}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <p className="text-[10px] text-textSecondary uppercase">Pace</p>
-                    <p className={`text-xs font-semibold ${isOver ? 'text-danger' : 'text-textPrimary'}`}>
-                      {spendPercent}% of Budget
-                    </p>
-                  </div>
+                </div>
+
+                {/* Sub-breakdown: Needs vs Wants */}
+                <div className="card-inner px-3 py-1.5 rounded-lg flex items-center justify-between text-[10px] text-textSecondary">
+                  <span>Needs: <strong className="text-textPrimary">{formatCurrency(needsSpent, countryCode)}</strong></span>
+                  <span>Wants: <strong className="text-textPrimary">{formatCurrency(wantsSpent, countryCode)}</strong></span>
                 </div>
 
                 <div className="space-y-1">
                   <div className="flex justify-between text-[10px] text-textSecondary">
-                    <span>Month Elapsed: {percentElapsed}%</span>
-                    <span>Day {currentDay} of {daysInMonth}</span>
+                    <span>Day {currentDay} of {daysInMonth} ({percentElapsed}%)</span>
+                    <span className={isOver ? "text-danger font-medium" : "text-textPrimary font-medium"}>
+                      Pace: {spendPercent}%
+                    </span>
                   </div>
                   <div className="w-full h-1.5 bg-surface rounded-full overflow-hidden border border-border/40">
                     <div 
@@ -200,11 +244,11 @@ export default function DashboardPage({ profile, expenses = [], budget }) {
 
                 {isOver ? (
                   <div className="p-3 rounded-xl bg-danger/15 border border-danger/30 text-danger text-[11px] leading-snug">
-                    ⚠️ pacing to overspend by <strong>{formatCurrency(overAmt, countryCode)}</strong> by month-end. Consider reducing Want allocations.
+                    ⚠️ Pacing to exceed your {formatCurrency(spendBudget, countryCode)} Needs & Wants budget by <strong>{formatCurrency(overAmt, countryCode)}</strong>.
                   </div>
                 ) : (
                   <div className="p-3 rounded-xl bg-accent/15 border border-accent/30 text-accent text-[11px] leading-snug">
-                    🟢 Great! Your current burn rate puts you on track to finish within your budget.
+                    🟢 Great! Your daily burn of <strong>{formatCurrency(dailyBurn, countryCode)}/day</strong> is on track within budget.
                   </div>
                 )}
               </div>

@@ -1,17 +1,127 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, PieChart, GraduationCap, Building2, HelpCircle } from "lucide-react";
+import { Send, Sparkles, PieChart, GraduationCap, Building2, TrendingUp, Wallet, Target } from "lucide-react";
 import ChatBubble from "../components/ChatBubble";
 import { formatCurrency, getScholarshipsForCountry, getLoansForCountry } from "../lib/countries";
 import { getChatHistory, saveMessage } from "../lib/firebase";
 
 const SUGGESTED_PROMPTS = [
-  "Can I afford a new laptop?",
-  "Where am I overspending this month?",
-  "Explain my student loan options",
-  "Find me top scholarships for my field",
-  "How do I build an emergency fund?",
-  "What is my current financial health score?",
+  "Am I overspending on any category this month?",
+  "What is my savings rate and how can I improve it?",
+  "Can I afford a ₹5,000 purchase right now?",
+  "Which expense category should I cut first?",
+  "How close am I to hitting my financial goals?",
+  "Give me a personalised monthly budget plan",
 ];
+
+/* ─────────────────────────────────────────────────────────── */
+/*  Intent Detection — only inject context for personal Qs    */
+/* ─────────────────────────────────────────────────────────── */
+const PERSONAL_KEYWORDS = [
+  "my ", " i ", "i'", "i am", "i've", "i have",
+  "spending", "spend", "spent", "expense", "expenses",
+  "budget", "afford", "afford", "income", "salary",
+  "save", "saving", "saved", "savings",
+  "score", "health", "overspend", "overspending",
+  "category", "categories", "food", "transport", "rent",
+  "entertainment", "education", "healthcare",
+  "goal", "goals", "loan", "scholarship",
+  "remaining", "left", "balance", "how much",
+  "can i", "should i", "do i", "am i",
+];
+
+function isPersonalQuery(message) {
+  const lower = message.toLowerCase();
+  return PERSONAL_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+/* ─────────────────────────────────────────────────────────── */
+/*  Build Full Financial Context (only sent when needed)       */
+/* ─────────────────────────────────────────────────────────── */
+function buildFullContext(profile, expenses = [], budget) {
+  const sym = profile?.countryData?.symbol || "₹";
+  const income = profile?.income || 0;
+  const monthlyBudget = budget?.total || income;
+
+  // Filter to current month only — matches MonthlyReview logic
+  const currentMonth = new Date().toISOString().substring(0, 7);
+  const monthlyExpenses = expenses.filter((e) => (e.date || "").startsWith(currentMonth));
+
+  // Totals (current month only)
+  const totalSpent = monthlyExpenses
+    .filter((e) => e.type !== "saving")
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+  const totalSaved = monthlyExpenses
+    .filter((e) => e.type === "saving")
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+  const incomeLeft = monthlyBudget - totalSpent - totalSaved;
+  const savingsRate = income > 0 ? ((totalSaved / income) * 100).toFixed(1) : "0.0";
+
+  // Category breakdown (expenses only, current month)
+  const EXPENSE_CATS = ["Food", "Transport", "Rent", "Entertainment", "Education", "Healthcare", "Other"];
+  const categoryBreakdown = EXPENSE_CATS.map((cat) => {
+    const total = monthlyExpenses
+      .filter((e) => e.type !== "saving" && e.category === cat)
+      .reduce((s, e) => s + Number(e.amount || 0), 0);
+    return { cat, total };
+  }).filter((c) => c.total > 0);
+
+  // Savings breakdown (current month)
+  const SAVINGS_CATS = ["Emergency Fund", "Savings Account", "Investments", "Goal Saving", "Other"];
+  const savingsBreakdown = SAVINGS_CATS.map((cat) => {
+    const total = monthlyExpenses
+      .filter((e) => e.type === "saving" && e.category === cat)
+      .reduce((s, e) => s + Number(e.amount || 0), 0);
+    return { cat, total };
+  }).filter((c) => c.total > 0);
+
+  // Budget allocations and targets
+  const allocations = budget?.allocations || { Needs: 50, Wants: 30, Savings: 20 };
+  const needsBudget = Math.round(monthlyBudget * (allocations.Needs / 100));
+  const wantsBudget = Math.round(monthlyBudget * (allocations.Wants / 100));
+  const savingsBudget = Math.round(monthlyBudget * (allocations.Savings / 100));
+
+  // Recent transactions for current month (last 7, no IDs)
+  const recentTxns = [...monthlyExpenses]
+    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .slice(0, 7)
+    .map((e) => `${e.date} | ${e.type === "saving" ? "SAVING" : "EXPENSE"} | ${e.category} | ${sym}${e.amount}${e.note ? ` (${e.note})` : ""}`);
+
+  // Income sources
+  const incomeSources = (budget?.incomeSources || [])
+    .map((s) => `${s.label}: ${sym}${s.amount}`)
+    .join(", ");
+
+  return `
+[USER FINANCIAL SNAPSHOT for ${currentMonth} — use this to give personalised, data-grounded advice]
+
+PROFILE
+  Name: ${profile?.name || "Student"}
+  Course: ${profile?.course || "Unknown"} | Year: ${profile?.year || "Unknown"}
+  University: ${profile?.university || "Unknown"}
+  Country: ${profile?.countryData?.name || "India"} | Currency: ${sym}
+  Financial Goals: ${(profile?.goals || []).join("; ") || "None set"}
+
+INCOME & BUDGET
+  Monthly Income: ${sym}${income.toLocaleString()}
+  Income Sources: ${incomeSources || `${sym}${income} (allowance)`}
+  Monthly Budget Limit: ${sym}${monthlyBudget.toLocaleString()}
+  Budget Allocation: Needs ${allocations.Needs}% (${sym}${needsBudget}) | Wants ${allocations.Wants}% (${sym}${wantsBudget}) | Savings ${allocations.Savings}% (${sym}${savingsBudget})
+
+${currentMonth} SUMMARY
+  Total Spent: ${sym}${totalSpent.toLocaleString()}
+  Actively Saved: ${sym}${totalSaved.toLocaleString()} (savings rate: ${savingsRate}%)
+  Income Left: ${sym}${incomeLeft.toLocaleString()} ${incomeLeft < 0 ? "⚠️ OVER BUDGET" : ""}
+
+EXPENSE CATEGORY BREAKDOWN (${currentMonth})
+${categoryBreakdown.length > 0 ? categoryBreakdown.map((c) => `  ${c.cat}: ${sym}${c.total.toLocaleString()}`).join("\n") : "  No expenses recorded yet"}
+
+SAVINGS BREAKDOWN (${currentMonth})
+${savingsBreakdown.length > 0 ? savingsBreakdown.map((c) => `  ${c.cat}: ${sym}${c.total.toLocaleString()}`).join("\n") : "  No savings recorded yet"}
+
+RECENT TRANSACTIONS (${currentMonth}, last 7)
+${recentTxns.length > 0 ? recentTxns.map((t) => `  ${t}`).join("\n") : "  No transactions this month"}
+[END SNAPSHOT]`.trim();
+}
 
 function generateClientFallback(query, profile, expenses = [], budget) {
   const msg = (query || "").toLowerCase();
@@ -19,7 +129,8 @@ function generateClientFallback(query, profile, expenses = [], budget) {
   const income = profile?.income || 15000;
   const country = profile?.countryData?.name || "your country";
   const course = profile?.course || "your course";
-  const totalSpent = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSpent = expenses.filter(e => e.type !== "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSaved = expenses.filter(e => e.type === "saving").reduce((s, e) => s + (Number(e.amount) || 0), 0);
 
   if (msg.includes("laptop") || msg.includes("afford") || msg.includes("buy")) {
     const recommended = Math.round(income * 2.5);
@@ -60,16 +171,39 @@ export default function ChatPage({ user, profile, expenses = [], budget }) {
   const currencySymbol = profile?.countryData?.symbol || "₹";
   const activeUid = user?.uid || "guest_user";
 
+  // ── Live stats for right panel (current month only, consistent with Monthly Review) ──
+  const currentMonthStr = new Date().toISOString().substring(0, 7);
+  const currentMonthExpenses = expenses.filter((e) => (e.date || "").startsWith(currentMonthStr));
+
+  const totalSpent = currentMonthExpenses
+    .filter((e) => e.type !== "saving")
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+  const totalSaved = currentMonthExpenses
+    .filter((e) => e.type === "saving")
+    .reduce((s, e) => s + Number(e.amount || 0), 0);
+  const monthlyBudget = budget?.total || profile?.income || 0;
+  const remaining = monthlyBudget - totalSpent - totalSaved;
+  const savingsRate = profile?.income > 0
+    ? ((totalSaved / profile.income) * 100).toFixed(1)
+    : "0.0";
+  const topCategoryEntry = Object.entries(
+    currentMonthExpenses
+      .filter((e) => e.type !== "saving")
+      .reduce((acc, e) => { acc[e.category] = (acc[e.category] || 0) + Number(e.amount || 0); return acc; }, {})
+  ).sort((a, b) => b[1] - a[1])[0];
+
+
   const defaultGreeting = {
     role: "bot",
-    content: `Hello ${profile?.name || "there"}! I'm FinBot, your Grok AI financial mentor. I can analyze your spending in ${profile?.countryData?.name || "your region"}, suggest budgets, explain student loans, or match scholarships. What would you like to explore today?`,
+    content: `Hello ${profile?.name || "there"}! I'm FinBot, your AI financial mentor. I have access to your spending data, budget, and goals — ask me anything personal like "Am I overspending?" or "Can I afford this?", or ask general questions like "What is compound interest?". How can I help?`,
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    model: "grok-ai",
+    model: "groq-ai",
   };
 
   const [messages, setMessages] = useState([defaultGreeting]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [lastContextUsed, setLastContextUsed] = useState(false);
 
   const messagesEndRef = useRef(null);
 
@@ -107,14 +241,38 @@ export default function ChatPage({ user, profile, expenses = [], budget }) {
     setInput("");
     setLoading(true);
 
-    try {
-      await saveMessage(activeUid, userMsg);
-    } catch (_) {}
+    try { await saveMessage(activeUid, userMsg); } catch (_) {}
 
-    const systemPrompt = `You are FinBot, a friendly, expert financial advisor for college students in ${profile?.countryData?.name || "India"}. 
-Always reference amounts in ${currencySymbol} (${profile?.currency || "INR"}). 
-Keep your advice clear, encouraging, structured, and under 200 words. 
-Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${profile?.course || "Student"}, Goals: ${(profile?.goals || []).join(", ") || "General financial growth"}.`;
+    // ── Smart Context Injection ──────────────────────────────
+    // Only attach the user's financial snapshot when the question
+    // is clearly personal — general/educational questions get none.
+    const personal = isPersonalQuery(queryText);
+    setLastContextUsed(personal);
+
+    const baseSystemPrompt =
+      `You are FinBot, a warm and friendly financial advisor for college students in ${
+        profile?.countryData?.name || "India"
+      }. Always reference amounts in ${currencySymbol} (${
+        profile?.currency || "INR"
+      }).
+
+TONE & FORMAT RULES — follow these strictly:
+- Write like a knowledgeable friend giving advice, NOT like a financial report.
+- Use natural, flowing sentences. NEVER use markdown tables (no pipe characters).
+- Keep responses under 180 words unless the question genuinely needs more detail.
+- You may use a short bullet list (max 4 items) only when listing distinct action steps.
+- Lead with the key insight or direct answer first, then explain briefly.
+- Weave numbers into sentences naturally (e.g. "You've spent ₹3,450 on food — that's about half your total spend this month.").
+- End with one encouraging line or a single clear next step.
+- Never use section headers like ## or pipe tables like | col |.` +
+      (personal
+        ? "\n\nThe user's live financial data is embedded below — use it to give grounded, specific, personalised advice. Cite actual numbers conversationally."
+        : "\n\nAnswer clearly and concisely.");
+
+    const systemPrompt = personal
+      ? `${baseSystemPrompt}\n\n${buildFullContext(profile, expenses, budget)}`
+      : baseSystemPrompt;
+
 
     try {
       const res = await fetch("/api/finbot", {
@@ -123,13 +281,7 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
         body: JSON.stringify({
           message: queryText,
           systemPrompt,
-          history: messages,
-          studentContext: {
-            currencySymbol,
-            income: profile?.income || 15000,
-            countryName: profile?.countryData?.name || "India",
-            course: profile?.course || "Student",
-          },
+          history: messages.slice(-8), // last 4 exchanges for conversational memory
         }),
       });
 
@@ -138,7 +290,8 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
         role: "bot",
         content: data.reply || generateClientFallback(queryText, profile, expenses, budget),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        model: data.model || "ibm/granite-13b-chat-v2",
+        model: data.model || "groq-ai",
+        contextUsed: personal,
       };
       setMessages((prev) => [...prev, botMsg]);
       await saveMessage(activeUid, botMsg);
@@ -148,7 +301,8 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
         role: "bot",
         content: fallbackReply,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        model: "ibm/granite-13b-chat-v2 (offline/demo)",
+        model: "demo (offline)",
+        contextUsed: personal,
       };
       setMessages((prev) => [...prev, fallbackMsg]);
       await saveMessage(activeUid, fallbackMsg);
@@ -172,7 +326,11 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
           {loading && (
             <div className="flex items-center gap-2 text-xs text-textSecondary p-2 bg-surface/50 rounded-xl border border-border/50 w-fit animate-pulse">
               <Sparkles size={14} className="animate-spin text-primary" />
-              <span>FinBot is analyzing your finances...</span>
+              <span>
+                {lastContextUsed
+                  ? "FinBot is analysing your personal finances..."
+                  : "FinBot is thinking..."}
+              </span>
             </div>
           )}
           <div ref={messagesEndRef} />
@@ -203,7 +361,7 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={`Ask FinBot anything about your ${currencySymbol} budget or loans...`}
+            placeholder={`Ask about your finances or anything financial...`}
             className="input-field flex-1 text-xs sm:text-sm py-2.5"
           />
           <button
@@ -217,23 +375,89 @@ Student Context: Income: ${currencySymbol}${profile?.income || 0}, Course: ${pro
       </div>
 
       {/* ── Right Dynamic Context Panel ──────────────────── */}
-      <div className="w-72 p-4 md:p-5 bg-surface border-t md:border-t-0 border-border overflow-y-auto space-y-6 hidden lg:block flex-shrink-0 h-full min-h-0">
+      <div className="w-72 p-4 md:p-5 bg-surface border-t md:border-t-0 border-border overflow-y-auto space-y-5 hidden lg:block flex-shrink-0 h-full min-h-0">
+
+        {/* Live Financial Snapshot */}
         <div>
-          <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wider mb-3">Student Context</h3>
-          <div className="glass p-4 rounded-xl space-y-2 text-xs">
-            <div className="flex justify-between">
-              <span className="text-textSecondary">Country</span>
-              <span className="font-medium text-textPrimary">{profile?.countryData?.flag} {profile?.countryData?.name}</span>
+          <div className="flex items-center gap-2 text-xs font-semibold text-textSecondary uppercase tracking-wider mb-3">
+            <TrendingUp size={13} className="text-accent" />
+            <span>Your Financial Snapshot</span>
+          </div>
+          <div className="glass rounded-xl border border-border overflow-hidden text-xs">
+            {/* Income vs Spent bar */}
+            <div className="p-3 border-b border-border/50 space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-textSecondary">Spent this month</span>
+                <span className={`font-bold ${
+                  totalSpent > monthlyBudget ? "text-danger" : "text-textPrimary"
+                }`}>{formatCurrency(totalSpent, countryCode)}</span>
+              </div>
+              {monthlyBudget > 0 && (
+                <div className="w-full bg-border/40 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className={`h-1.5 rounded-full transition-all ${
+                      (totalSpent + totalSaved) > monthlyBudget ? "bg-danger" :
+                      (totalSpent + totalSaved) > monthlyBudget * 0.8 ? "bg-warning" : "bg-primary"
+                    }`}
+                    style={{ width: `${Math.min(100, (((totalSpent + totalSaved) / monthlyBudget) * 100))}%` }}
+                  />
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-textSecondary">Income Left</span>
+                <span className={`font-semibold ${
+                  remaining >= 0 ? "text-accent" : "text-danger"
+                }`}>{remaining >= 0 ? formatCurrency(remaining, countryCode) : `-${formatCurrency(Math.abs(remaining), countryCode)}`}</span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-textSecondary">Monthly Income</span>
-              <span className="font-medium text-accent">{formatCurrency(profile?.income || 0, countryCode)}</span>
+
+            {/* Savings */}
+            <div className="p-3 border-b border-border/50 flex justify-between">
+              <div className="flex items-center gap-1.5">
+                <Wallet size={11} className="text-accent" />
+                <span className="text-textSecondary">Saved</span>
+              </div>
+              <div className="text-right">
+                <span className="font-bold text-accent">{formatCurrency(totalSaved, countryCode)}</span>
+                <span className="text-[10px] text-textSecondary ml-1">({savingsRate}%)</span>
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-textSecondary">Course</span>
-              <span className="font-medium text-textPrimary">{profile?.course || "General"}</span>
+
+            {/* Top spending category */}
+            <div className="p-3 border-b border-border/50 flex justify-between">
+              <div className="flex items-center gap-1.5">
+                <PieChart size={11} className="text-warning" />
+                <span className="text-textSecondary">Top spend</span>
+              </div>
+              <span className="font-semibold text-textPrimary">
+                {topCategoryEntry ? `${topCategoryEntry[0]} (${formatCurrency(topCategoryEntry[1], countryCode)})` : "—"}
+              </span>
+            </div>
+
+            {/* Goals */}
+            <div className="p-3">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Target size={11} className="text-primary" />
+                <span className="text-textSecondary">Goals</span>
+              </div>
+              {(profile?.goals || []).length > 0 ? (
+                <ul className="space-y-0.5">
+                  {(profile.goals || []).map((g, i) => (
+                    <li key={i} className="text-[10px] text-textPrimary truncate">• {g}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[10px] text-textSecondary">No goals set yet</p>
+              )}
             </div>
           </div>
+        </div>
+
+        {/* Context Mode Indicator */}
+        <div className="glass rounded-xl p-3 border border-border/50 text-[10px] text-textSecondary space-y-1">
+          <p className="font-semibold text-textPrimary text-xs">🤖 Smart Context Mode</p>
+          <p>Personal questions (spending, budget, goals) → FinBot sees your live data.</p>
+          <p>General questions → no data sent, saving tokens.</p>
         </div>
 
         {/* Top Scholarships Quick Panel */}
