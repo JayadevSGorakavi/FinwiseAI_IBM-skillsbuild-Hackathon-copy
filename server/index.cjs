@@ -20,6 +20,18 @@ try {
   dotenv.config({ path: path.join(__dirname, "../.env") });
 } catch (_) { /* dotenv optional */ }
 
+/* Fix broken rupee symbols that Groq occasionally produces */
+function sanitizeReply(text) {
+  if (!text) return text;
+  return text
+    .replace(/\\u20[Bb]9/g, "\u20b9")
+    .replace(/&#x20[Bb]9;/gi, "\u20b9")
+    .replace(/&#8377;/g, "\u20b9")
+    .replace(/[◆♦\uFFFD]{1,3}(?=\d)/g, "\u20b9")
+    .replace(/\bRs\.?\s*/g, "\u20b9")
+    .replace(/\bINR\s+(?=[\d,])/g, "\u20b9");
+}
+
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use((req, res, next) => {
@@ -261,14 +273,14 @@ Keep responses under 200 words.`;
     const groqResponse = await callGroq(contextPrompt, message, 600);
 
     if (groqResponse) {
-      return res.json({ reply: groqResponse, model: "openai/gpt-oss-120b", _real: true });
+      return res.json({ reply: sanitizeReply(groqResponse), model: "openai/gpt-oss-120b", _real: true });
     }
 
     // Fallback if IBM watsonx is configured
     if (WATSONX_API_KEY && WATSONX_PROJECT_ID) {
       const graniteResponse = await callGranite(contextPrompt, message, 600);
       if (graniteResponse) {
-        return res.json({ reply: graniteResponse, model: "ibm/granite-13b-chat-v2", _real: true });
+        return res.json({ reply: sanitizeReply(graniteResponse), model: "ibm/granite-13b-chat-v2", _real: true });
       }
     }
 
@@ -853,3 +865,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+
