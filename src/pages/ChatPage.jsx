@@ -123,6 +123,33 @@ ${recentTxns.length > 0 ? recentTxns.map((t) => `  ${t}`).join("\n") : "  No tra
 [END SNAPSHOT]`.trim();
 }
 
+/* ─────────────────────────────────────────────────────────── */
+/*  Sanitize AI reply — fix broken ₹ symbol rendering          */
+/*  Groq sometimes outputs the rupee sign as a Unicode escape  */
+/*  (\u20b9), as the HTML entity (&#x20B9; / &amp;#8377;),    */
+/*  or as mojibake diamond characters (◆◆◆ / ♦♦♦) when the   */
+/*  UTF-8 byte sequence 0xE2 0x82 0xB9 gets mis-decoded.       */
+/* ─────────────────────────────────────────────────────────── */
+function sanitizeReply(text) {
+  if (!text) return text;
+  return text
+    // Unicode escape literal in the string
+    .replace(/\\u20[Bb]9/g, "₹")
+    // HTML entities
+    .replace(/&#x20[Bb]9;/gi, "₹")
+    .replace(/&#8377;/g, "₹")
+    .replace(/&amp;#8377;/g, "₹")
+    // Mojibake: the 3-byte UTF-8 sequence for ₹ decoded as Latin-1
+    // shows up as â\u0082¹ or similar; cover the common patterns
+    .replace(/â\u0082¹/g, "₹")
+    .replace(/â€š¹/g, "₹")
+    // Diamond replacement characters that browsers show for bad bytes
+    .replace(/[◆♦\uFFFD]{1,3}(?=\d)/g, "₹")
+    // Rs. / INR shorthand the model sometimes uses instead
+    .replace(/\bRs\.?\s*/g, "₹")
+    .replace(/\bINR\s+(?=[\d,])/g, "₹");
+}
+
 function generateClientFallback(query, profile, expenses = [], budget) {
   const msg = (query || "").toLowerCase();
   const symbol = profile?.countryData?.symbol || "₹";
@@ -300,7 +327,7 @@ TONE & FORMAT RULES — follow these strictly:
 
       const botMsg = {
         role: "bot",
-        content: data.reply || generateClientFallback(queryText, profile, expenses, budget),
+        content: sanitizeReply(data.reply) || generateClientFallback(queryText, profile, expenses, budget),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         model: data.model || "groq-ai",
         contextUsed: personal,
@@ -312,7 +339,7 @@ TONE & FORMAT RULES — follow these strictly:
       const fallbackReply = generateClientFallback(queryText, profile, expenses, budget);
       const fallbackMsg = {
         role: "bot",
-        content: fallbackReply,
+        content: sanitizeReply(fallbackReply),
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         model: "demo (offline)",
         contextUsed: personal,
