@@ -9,7 +9,6 @@
  */
 
 const express = require("express");
-const cors    = require("cors");
 const https   = require("https");
 const http    = require("http");
 const fs      = require("fs");
@@ -23,14 +22,13 @@ try {
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
-
-// Robust CORS setup for Vercel <-> Render communication
-app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 /* ─────────────────────────────────────────────────────────── */
 /*  Serve built frontend from /dist                            */
@@ -175,13 +173,11 @@ function makeGroqSingleRequest(apiKey, model, systemPrompt, userMessage, maxToke
 
 async function callGroq(systemPrompt, userMessage, maxTokens = 800) {
   const apiKey = (process.env.GROQ_API_KEY || process.env.GROK_API_KEY || "").trim();
-  if (!apiKey) {
-    console.error("GROQ_API_KEY is missing in process.env");
-    return null;
-  }
+  if (!apiKey) return null;
 
-  // Reliable production models on Groq
+  // Try the exact model from the original codebase, then robust fallback models
   const models = [
+    "openai/gpt-oss-120b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "mixtral-8x7b-32768"
@@ -219,9 +215,10 @@ app.post("/api/finbot", async (req, res) => {
 Give concise, actionable advice in plain English. Be encouraging but honest. 
 Keep responses under 200 words.`;
 
+  // Build conversation context from history
   let contextPrompt = sysPrompt;
   if (history.length > 0) {
-    const recentHistory = history.slice(-6);
+    const recentHistory = history.slice(-6); // last 3 exchanges
     contextPrompt += "\n\nConversation so far:";
     recentHistory.forEach(h => {
       contextPrompt += `\n${h.role === "user" ? "Student" : "FinBot"}: ${h.content}`;
@@ -232,9 +229,10 @@ Keep responses under 200 words.`;
     const groqResponse = await callGroq(contextPrompt, message, 600);
 
     if (groqResponse) {
-      return res.json({ reply: groqResponse, model: "llama-3.3-70b-versatile", _real: true });
+      return res.json({ reply: groqResponse, model: "openai/gpt-oss-120b", _real: true });
     }
 
+    // Fallback if IBM watsonx is configured
     if (WATSONX_API_KEY && WATSONX_PROJECT_ID) {
       const graniteResponse = await callGranite(contextPrompt, message, 600);
       if (graniteResponse) {
@@ -242,6 +240,7 @@ Keep responses under 200 words.`;
       }
     }
 
+    // Fallback stub
     const stub = FINBOT_STUB_RESPONSES[Math.floor(Math.random() * FINBOT_STUB_RESPONSES.length)];
     res.json({ reply: stub, model: "demo", _stub: true });
   } catch (err) {
@@ -252,7 +251,7 @@ Keep responses under 200 words.`;
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/health-score                                     */
-/*  IBM AI Financial Health Score 0-100                        */
+/*  IBM AI Financial Health Score 0-100                       */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/health-score", async (req, res) => {
   const { profile, expenses, budget } = req.body || {};
@@ -311,15 +310,17 @@ Calculate financial health score, subScores (budget & goals out of 50 each), and
     const groqResponse = await callGroq(systemPrompt, userMessage, 500);
 
     if (groqResponse) {
+      // Extract JSON from response
       const jsonMatch = groqResponse.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         try {
           const data = JSON.parse(jsonMatch[0]);
           return res.json({ ...data, _real: true });
-        } catch (_) {}
+        } catch (_) { /* JSON parse failed, fall through to computed fallback */ }
       }
     }
 
+    // Computed fallback score when JSON parse failed
     let budgetSub = 50;
     const totalAllocated = totalSpent + totalSaved;
     if (totalAllocated > monthlyBudget) {
@@ -334,6 +335,7 @@ Calculate financial health score, subScores (budget & goals out of 50 each), and
     const score = Math.round(Math.min(100, Math.max(0, budgetSub + goalsSub)));
     const grade = score >= 80 ? "A" : score >= 60 ? "B" : score >= 40 ? "C" : "D";
 
+    // Ask Groq specifically for 3 personalised improvement tips
     const tipsPrompt = `You are a financial advisor for students. The student's financial health score is ${score}/100 (grade ${grade}).
 Monthly income: ${income} ${currency}, total spent: ${totalSpent} ${currency}, budget: ${monthlyBudget} ${currency}.
 Goals: ${(profile?.goals || []).join(", ") || "Not set"}.
@@ -355,6 +357,7 @@ Return ONLY a JSON array of exactly 3 improvement objects, no other text:
     }
 
     if (!improvements || !Array.isArray(improvements)) {
+      // Contextual generic tips based on actual data
       const overBudget = totalSpent > monthlyBudget;
       improvements = [
         {
@@ -400,7 +403,7 @@ Return ONLY a JSON array of exactly 3 improvement objects, no other text:
       tips: ["Track expenses daily", "Save before you spend", "Review your budget weekly"],
       subScores: { budget: 35, goals: 35 },
       improvements: [
-        { points: 5,  action: "Track all daily micro-purchases",                 why: "Identifies hidden spending leakage" },
+        { points: 5,  action: "Track all daily micro-purchases",                   why: "Identifies hidden spending leakage" },
         { points: 10, action: "Automate savings transfers each payday",             why: "Ensures consistent savings rate" },
         { points: 15, action: "Keep total spending within monthly budget limit",    why: "Directly maximises budget adherence score" }
       ],
@@ -411,7 +414,7 @@ Return ONLY a JSON array of exactly 3 improvement objects, no other text:
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/monthly-review                                   */
-/*  IBM AI Monthly Goal Alignment & Review                     */
+/*  IBM AI Monthly Goal Alignment & Review                    */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/monthly-review", async (req, res) => {
   const { profile, expenses, budget } = req.body || {};
@@ -464,6 +467,7 @@ Provide goal alignment feedback based on this data.`;
       }
     }
 
+    // Fallback comparison
     const goalAlignments = goals.map(g => {
       const isSavingGoal = g.toLowerCase().includes("save") || g.toLowerCase().includes("fund");
       const status = isSavingGoal ? (totalSaved > 0 ? "on-track" : "needs-focus") : "on-track";
@@ -496,6 +500,7 @@ Provide goal alignment feedback based on this data.`;
   }
 });
 
+
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/advise  (legacy compatibility)                   */
 /* ─────────────────────────────────────────────────────────── */
@@ -517,10 +522,10 @@ Format: {"explanation": "...", "example": "..."}`;
     if (jsonMatch) {
       try {
         const data = JSON.parse(jsonMatch[0]);
-        return res.json({ ...data, model: "llama-3.3-70b-versatile", ruleCode, _real: true });
+        return res.json({ ...data, model: "openai/gpt-oss-120b", ruleCode, _real: true });
       } catch (_) {}
     }
-    return res.json({ explanation: ibmResponse, example: null, model: "llama-3.3-70b-versatile", ruleCode, _real: true });
+    return res.json({ explanation: ibmResponse, example: null, model: "openai/gpt-oss-120b", ruleCode, _real: true });
   }
 
   res.json({
@@ -534,7 +539,7 @@ Format: {"explanation": "...", "example": "..."}`;
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/discover-scholarships                            */
-/*  Live AI Discovery of Scholarships for country & course     */
+/*  Live AI Discovery of Scholarships for country & course    */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/discover-scholarships", async (req, res) => {
   const { country = "India", countryCode = "IN", course = "Engineering", university = "University" } = req.body || {};
@@ -579,7 +584,7 @@ Return ONLY a valid JSON array of objects with this EXACT structure (no other ma
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/discover-loans                                   */
-/*  Live AI Discovery of Student Loans & Subsidies             */
+/*  Live AI Discovery of Student Loans & Subsidies            */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/discover-loans", async (req, res) => {
   const { country = "India", countryCode = "IN", course = "Engineering", university = "University" } = req.body || {};
@@ -622,7 +627,7 @@ Return ONLY a valid JSON array of objects with this EXACT structure (no other ma
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/match-scholarships                               */
-/*  Detailed Best Scholarships + How to Apply Guide            */
+/*  Detailed Best Scholarships + How to Apply Guide           */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/match-scholarships", async (req, res) => {
   const {
@@ -741,7 +746,7 @@ app.get("/", (_req, res) => {
       </head>
       <body>
         <h1>🚀 FinWise AI Backend API Server</h1>
-        <p><span class="badge">Status: Running</span></p>
+        <p><span class="badge">Status: Running on Port 3001</span></p>
         <p>This is the Express backend API for FinWise AI.</p>
         <h3>Available API Endpoints:</h3>
         <ul>
@@ -749,6 +754,7 @@ app.get("/", (_req, res) => {
           <li><code>POST /api/finbot</code> — Groq / IBM watsonx Granite Chat</li>
           <li><code>POST /api/health-score</code> — AI Financial Health Score (0-100)</li>
         </ul>
+        <p>👉 To access the full UI web application, open <a href="http://localhost:5173" target="_blank">http://localhost:5173</a></p>
       </body>
     </html>
   `);
@@ -772,6 +778,7 @@ app.get("/api/health", (_req, res) => {
 /* ─────────────────────────────────────────────────────────── */
 if (distExists) {
   app.get("*", (req, res) => {
+    // Only serve index.html for non-API, non-asset requests
     if (!req.path.startsWith("/api")) {
       res.sendFile(path.join(DIST_DIR, "index.html"));
     }
@@ -779,27 +786,32 @@ if (distExists) {
 }
 
 /* ─────────────────────────────────────────────────────────── */
-/*  Export Express App for Vercel Serverless Functions         */
+/*  Startup                                                    */
 /* ─────────────────────────────────────────────────────────── */
-module.exports = app;
+const PORT = process.env.PORT || 3001;
 
-/* ─────────────────────────────────────────────────────────── */
-/*  Startup (Only runs in local Node environments)             */
-/* ─────────────────────────────────────────────────────────── */
+// Start server only when running locally.
+// Vercel imports this file as a serverless function.
 if (require.main === module) {
-  const PORT = process.env.PORT || 3001;
-  const HOST = "0.0.0.0";
-
-  app.listen(PORT, HOST, () => {
-    console.log(`\n🚀 FinWise AI API running on http://${HOST}:${PORT}`);
+  app.listen(PORT, () => {
+    console.log(`\n🚀 FinWise AI API on http://localhost:${PORT}`);
     console.log(`   POST /api/finbot        — FinBot (Groq / IBM watsonx Granite)`);
     console.log(`   POST /api/health-score  — AI Financial Health Score`);
     console.log(`   POST /api/advise        — legacy compatibility`);
     console.log(`   GET  /api/health        — health check`);
+
     if (!process.env.GROQ_API_KEY && !WATSONX_API_KEY) {
       console.log(`\n⚠️  No API key set in .env — running in demo mode`);
     } else {
-      console.log(`\n✅ Connected AI: ${process.env.GROQ_API_KEY ? "Groq (" + (process.env.GROQ_API_KEY.slice(0, 8)) + "...)" : "IBM watsonx"}\n`);
+      console.log(
+        `\n✅ Connected AI: ${
+          process.env.GROQ_API_KEY
+            ? "Groq (" + process.env.GROQ_API_KEY.slice(0, 8) + "...)"
+            : "IBM watsonx"
+        }\n`
+      );
     }
   });
 }
+
+module.exports = app;
