@@ -31,6 +31,25 @@ app.use((req, res, next) => {
 });
 
 /* ─────────────────────────────────────────────────────────── */
+/*  Path normalisation                                         */
+/*  Some hosts (Vercel rewrites, proxies) can deliver the      */
+/*  request with the /api prefix already stripped. Put it back */
+/*  so the routes below match either way.                      */
+/* ─────────────────────────────────────────────────────────── */
+const API_ROUTES = [
+  "finbot", "health", "health-score", "advise", "monthly-review",
+  "discover-scholarships", "discover-loans", "match-scholarships",
+];
+app.use((req, _res, next) => {
+  const [pathname, query] = req.url.split("?");
+  const firstSegment = pathname.replace(/^\/+/, "").split("/")[0];
+  if (!pathname.startsWith("/api") && API_ROUTES.includes(firstSegment)) {
+    req.url = `/api${pathname}${query ? `?${query}` : ""}`;
+  }
+  next();
+});
+
+/* ─────────────────────────────────────────────────────────── */
 /*  Serve built frontend from /dist                            */
 /*  This makes `node server/index.cjs` serve BOTH the React   */
 /*  app AND the /api endpoints from the same port (3001).     */
@@ -158,14 +177,27 @@ function makeGroqSingleRequest(apiKey, model, systemPrompt, userMessage, maxToke
       let raw = "";
       res.on("data", c => raw += c);
       res.on("end", () => {
+        // Log why a model failed — silent nulls are what made this
+        // impossible to debug from the deployed logs.
+        if (res.statusCode !== 200) {
+          console.error(`[groq] ${model} → HTTP ${res.statusCode}: ${raw.slice(0, 300)}`);
+          return resolve(null);
+        }
         try {
           const json = JSON.parse(raw);
           const text = json.choices?.[0]?.message?.content?.trim() || null;
+          if (!text) console.error(`[groq] ${model} → empty completion: ${raw.slice(0, 300)}`);
           resolve(text);
-        } catch { resolve(null); }
+        } catch (e) {
+          console.error(`[groq] ${model} → bad JSON: ${e.message}`);
+          resolve(null);
+        }
       });
     });
-    req.on("error", () => resolve(null));
+    req.on("error", (e) => {
+      console.error(`[groq] ${model} → network error: ${e.message}`);
+      resolve(null);
+    });
     req.write(payload);
     req.end();
   });
@@ -240,12 +272,18 @@ Keep responses under 200 words.`;
       }
     }
 
-    // Fallback stub
+    // Fallback stub — say WHY, so a missing key is obvious in the UI/logs
+    const hasKey = !!(process.env.GROQ_API_KEY || process.env.GROK_API_KEY || WATSONX_API_KEY);
+    const reason = hasKey
+      ? "AI provider rejected the request (check the server logs for [groq] lines)"
+      : "No GROQ_API_KEY / WATSONX_API_KEY set in this environment";
+    console.error(`[finbot] falling back to stub — ${reason}`);
     const stub = FINBOT_STUB_RESPONSES[Math.floor(Math.random() * FINBOT_STUB_RESPONSES.length)];
-    res.json({ reply: stub, model: "demo", _stub: true });
+    res.json({ reply: stub, model: "demo", _stub: true, _reason: reason });
   } catch (err) {
+    console.error("[finbot] handler error:", err);
     const stub = FINBOT_STUB_RESPONSES[0];
-    res.json({ reply: stub, model: "demo", _stub: true });
+    res.json({ reply: stub, model: "demo", _stub: true, _reason: err.message });
   }
 });
 
