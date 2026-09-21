@@ -285,7 +285,19 @@ TONE & FORMAT RULES — follow these strictly:
         }),
       });
 
-      const data = await res.json();
+      // A crashed/missing serverless function returns an HTML error page, not
+      // JSON. Read it as text first so the real cause lands in the console
+      // instead of being swallowed as a generic "offline".
+      const rawBody = await res.text();
+      let data;
+      try {
+        data = JSON.parse(rawBody);
+      } catch {
+        throw new Error(`/api/finbot returned ${res.status} (non-JSON): ${rawBody.slice(0, 200)}`);
+      }
+      if (!res.ok) throw new Error(`/api/finbot returned ${res.status}: ${data.error || rawBody.slice(0, 200)}`);
+      if (data._reason) console.warn("FinBot is answering with a stub:", data._reason);
+
       const botMsg = {
         role: "bot",
         content: data.reply || generateClientFallback(queryText, profile, expenses, budget),
@@ -295,7 +307,8 @@ TONE & FORMAT RULES — follow these strictly:
       };
       setMessages((prev) => [...prev, botMsg]);
       await saveMessage(activeUid, botMsg);
-    } catch {
+    } catch (err) {
+      console.error("FinBot API call failed — using local fallback:", err);
       const fallbackReply = generateClientFallback(queryText, profile, expenses, budget);
       const fallbackMsg = {
         role: "bot",
