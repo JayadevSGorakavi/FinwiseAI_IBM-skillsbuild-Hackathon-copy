@@ -248,13 +248,15 @@ export async function getExpenses(uid) {
 
   if (db) {
     try {
+      // Query without composite index requirement, then sort in-memory
       const q = query(
         collection(db, "expenses"),
-        where("uid", "==", uid),
-        orderBy("date", "desc")
+        where("uid", "==", uid)
       );
       const snap = await getDocs(q);
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
       setLocalItem(STORAGE_KEYS.EXPENSES_PREFIX + uid, items);
       return items;
     } catch (err) {
@@ -369,11 +371,16 @@ export async function getChatHistory(uid) {
     try {
       const q = query(
         collection(db, "chats"),
-        where("uid", "==", uid),
-        orderBy("createdAt", "asc")
+        where("uid", "==", uid)
       );
       const snap = await getDocs(q);
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const items = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => {
+          const tA = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : new Date(a.timestamp || 0).getTime() || 0;
+          const tB = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : new Date(b.timestamp || 0).getTime() || 0;
+          return tA - tB;
+        });
       setLocalItem(STORAGE_KEYS.CHATS_PREFIX + uid, items);
       return items;
     } catch (err) {
