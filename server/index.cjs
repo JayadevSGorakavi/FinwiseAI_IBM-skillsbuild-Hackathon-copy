@@ -46,7 +46,7 @@ if (distExists) {
 }
 
 /* ─────────────────────────────────────────────────────────── */
-/*  IBM watsonx.ai helper                                     */
+/*  IBM watsonx.ai helper                                      */
 /* ─────────────────────────────────────────────────────────── */
 const WATSONX_URL        = process.env.WATSONX_URL        || "https://us-south.ml.cloud.ibm.com";
 const WATSONX_API_KEY    = process.env.WATSONX_API_KEY    || "";
@@ -232,7 +232,7 @@ Keep responses under 200 words.`;
     const groqResponse = await callGroq(contextPrompt, message, 600);
 
     if (groqResponse) {
-      return res.json({ reply: groqResponse, model: "openai/gpt-oss-120b", _real: true });
+      return res.json({ reply: groqResponse, model: "llama-3.3-70b-versatile", _real: true });
     }
 
     if (WATSONX_API_KEY && WATSONX_PROJECT_ID) {
@@ -411,7 +411,7 @@ Return ONLY a JSON array of exactly 3 improvement objects, no other text:
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/monthly-review                                   */
-/*  IBM AI Monthly Goal Alignment & Review                    */
+/*  IBM AI Monthly Goal Alignment & Review                     */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/monthly-review", async (req, res) => {
   const { profile, expenses, budget } = req.body || {};
@@ -517,10 +517,10 @@ Format: {"explanation": "...", "example": "..."}`;
     if (jsonMatch) {
       try {
         const data = JSON.parse(jsonMatch[0]);
-        return res.json({ ...data, model: "openai/gpt-oss-120b", ruleCode, _real: true });
+        return res.json({ ...data, model: "llama-3.3-70b-versatile", ruleCode, _real: true });
       } catch (_) {}
     }
-    return res.json({ explanation: ibmResponse, example: null, model: "openai/gpt-oss-120b", ruleCode, _real: true });
+    return res.json({ explanation: ibmResponse, example: null, model: "llama-3.3-70b-versatile", ruleCode, _real: true });
   }
 
   res.json({
@@ -534,7 +534,7 @@ Format: {"explanation": "...", "example": "..."}`;
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/discover-scholarships                            */
-/*  Live AI Discovery of Scholarships for country & course    */
+/*  Live AI Discovery of Scholarships for country & course     */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/discover-scholarships", async (req, res) => {
   const { country = "India", countryCode = "IN", course = "Engineering", university = "University" } = req.body || {};
@@ -579,7 +579,7 @@ Return ONLY a valid JSON array of objects with this EXACT structure (no other ma
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/discover-loans                                   */
-/*  Live AI Discovery of Student Loans & Subsidies            */
+/*  Live AI Discovery of Student Loans & Subsidies             */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/discover-loans", async (req, res) => {
   const { country = "India", countryCode = "IN", course = "Engineering", university = "University" } = req.body || {};
@@ -622,7 +622,7 @@ Return ONLY a valid JSON array of objects with this EXACT structure (no other ma
 
 /* ─────────────────────────────────────────────────────────── */
 /*  POST /api/match-scholarships                               */
-/*  Detailed Best Scholarships + How to Apply Guide           */
+/*  Detailed Best Scholarships + How to Apply Guide            */
 /* ─────────────────────────────────────────────────────────── */
 app.post("/api/match-scholarships", async (req, res) => {
   const {
@@ -779,20 +779,27 @@ if (distExists) {
 }
 
 /* ─────────────────────────────────────────────────────────── */
-/*  Startup                                                    */
+/*  Export Express App for Vercel Serverless Functions         */
 /* ─────────────────────────────────────────────────────────── */
-const PORT = process.env.PORT || 3001;
-const HOST = "0.0.0.0";
+module.exports = app;
 
-app.listen(PORT, HOST, () => {
-  console.log(`\n🚀 FinWise AI API running on http://${HOST}:${PORT}`);
-  console.log(`   POST /api/finbot        — FinBot (Groq / IBM watsonx Granite)`);
-  console.log(`   POST /api/health-score  — AI Financial Health Score`);
-  console.log(`   POST /api/advise        — legacy compatibility`);
-  console.log(`   GET  /api/health        — health check`);
-  if (!process.env.GROQ_API_KEY && !WATSONX_API_KEY) {
-    console.log(`\n⚠️  No API key set in .env — running in demo mode`);
-  } else {
-    console.log(`\n✅ Connected AI: ${process.env.GROQ_API_KEY ? "Groq (" + (process.env.GROQ_API_KEY.slice(0, 8)) + "...)" : "IBM watsonx"}\n`);
-  }
-});
+/* ─────────────────────────────────────────────────────────── */
+/*  Startup (Only runs in local Node environments)             */
+/* ─────────────────────────────────────────────────────────── */
+if (require.main === module) {
+  const PORT = process.env.PORT || 3001;
+  const HOST = "0.0.0.0";
+
+  app.listen(PORT, HOST, () => {
+    console.log(`\n🚀 FinWise AI API running on http://${HOST}:${PORT}`);
+    console.log(`   POST /api/finbot        — FinBot (Groq / IBM watsonx Granite)`);
+    console.log(`   POST /api/health-score  — AI Financial Health Score`);
+    console.log(`   POST /api/advise        — legacy compatibility`);
+    console.log(`   GET  /api/health        — health check`);
+    if (!process.env.GROQ_API_KEY && !WATSONX_API_KEY) {
+      console.log(`\n⚠️  No API key set in .env — running in demo mode`);
+    } else {
+      console.log(`\n✅ Connected AI: ${process.env.GROQ_API_KEY ? "Groq (" + (process.env.GROQ_API_KEY.slice(0, 8)) + "...)" : "IBM watsonx"}\n`);
+    }
+  });
+}
