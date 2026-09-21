@@ -175,10 +175,13 @@ function makeGroqSingleRequest(apiKey, model, systemPrompt, userMessage, maxToke
 
 async function callGroq(systemPrompt, userMessage, maxTokens = 800) {
   const apiKey = (process.env.GROQ_API_KEY || process.env.GROK_API_KEY || "").trim();
-  if (!apiKey) return null;
+  if (!apiKey) {
+    console.error("GROQ_API_KEY is missing in process.env");
+    return null;
+  }
 
+  // Reliable production models on Groq
   const models = [
-    "openai/gpt-oss-120b",
     "llama-3.3-70b-versatile",
     "llama-3.1-8b-instant",
     "mixtral-8x7b-32768"
